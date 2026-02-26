@@ -1,113 +1,54 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
+// Ganti isi AuthContext.tsx dengan logika ini
+import React, { createContext, useEffect, useState } from 'react';
 import { supabase } from '../services/supabaseClient';
-import type { Session, User } from '@supabase/supabase-js';
-import type { Profile } from '../types';
 
-interface AuthContextType {
-  user: User | null;
-  session: Session | null;
-  profile: Profile | null;
-  loading: boolean;
-  signOut: () => Promise<void>;
-}
+export const AuthContext = createContext<any>(null);
 
-export const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-interface AuthProviderProps {
-  children: ReactNode;
-}
-
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  // --- FUNGSI BYPASS (JALUR KHUSUS) ---
-  // Kita tidak lagi meminta data ke database, tapi langsung buat data palsu
-  // supaya kamu BISA MASUK dulu.
-  const fetchProfile = async (userId: string) => {
-    console.log("[BYPASS] Mengaktifkan Jalur VIP Admin...");
-    
-    // Kembalikan data profil ADMIN secara paksa
-    return {
-      id: userId,
-      email: "urfahtasya@gmail.com", // Email kamu
-      role: 'admin',                 // JABATAN ADMIN
-      created_at: new Date().toISOString()
-    } as Profile;
-  };
-  // -------------------------------------
-
   useEffect(() => {
-    let mounted = true;
+    // 1. Cek cadangan di localStorage dulu agar langsung muncul (Instan)
+    const savedProfile = localStorage.getItem('userProfile');
+    if (savedProfile) {
+      setProfile(JSON.parse(savedProfile));
+      setLoading(false);
+    }
 
-    const initAuth = async () => {
-      try {
-        const { data: { session: currentSession }, error } = await supabase.auth.getSession();
-        
-        if (error) throw error;
-        
-        if (mounted) {
-            setSession(currentSession);
-            setUser(currentSession?.user ?? null);
-        }
+    // 2. Cek sesi asli dari Supabase
+    const getUserProfile = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session) {
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
 
-        if (currentSession?.user && mounted) {
-          // Panggil fungsi Bypass di atas
-          const userProfile = await fetchProfile(currentSession.user.id);
-          if (mounted) setProfile(userProfile);
-        }
-      } catch (error) {
-        console.error('Gagal initAuth:', error);
-      } finally {
-        if (mounted) {
-            setLoading(false);
-        }
-      }
-    };
-
-    initAuth();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        if (!mounted) return;
-
-        setSession(newSession);
-        setUser(newSession?.user ?? null);
-
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-            if (newSession?.user) {
-                const userProfile = await fetchProfile(newSession.user.id);
-                if (mounted) setProfile(userProfile);
-            }
-        } else if (event === 'SIGNED_OUT') {
-            setProfile(null);
-            setLoading(false);
+        if (data) {
+          setProfile(data);
+          // Kunci data ke localStorage
+          localStorage.setItem('userProfile', JSON.stringify(data));
         }
       }
-    );
-
-    return () => {
-      mounted = false;
-      authListener?.subscription.unsubscribe();
+      setLoading(false);
     };
+
+    getUserProfile();
   }, []);
 
   const signOut = async () => {
-    try {
-        await supabase.auth.signOut();
-        setSession(null);
-        setUser(null);
-        setProfile(null);
-        window.location.href = '/login'; 
-    } catch (e) {
-        console.error("Error sign out", e);
-        window.location.href = '/login';
-    }
+    await supabase.auth.signOut();
+    localStorage.clear();
+    setProfile(null);
+    window.location.href = '/login';
   };
 
-  const value = { user, session, profile, loading, signOut };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ profile, loading, signOut }}>
+      {!loading && children}
+    </AuthContext.Provider>
+  );
 };

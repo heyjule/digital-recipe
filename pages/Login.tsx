@@ -29,22 +29,41 @@ const Login = () => {
     }
   }, [session, authLoading, navigate]);
 
-  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
+const handleLogin = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setLoading(true);
+
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (error) {
-      toast.error(getSupabaseErrorMessage(error, 'Email atau password salah.'));
-    } else {
-      toast.success('Login berhasil!');
-      navigate('/', { replace: true });
+    if (error) throw error;
+
+    if (data?.user) {
+      // Ambil data profile
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', data.user.id)
+        .single();
+
+      // SIMPAN DATA KE MEMORI
+      localStorage.setItem('userProfile', JSON.stringify(profile));
+
+      toast.success('Login Berhasil!');
+
+      // SOLUSI STUCK: Paksa browser memuat ulang halaman dari awal
+      // Jangan gunakan navigate(), gunakan href agar sistem Router ter-reset
+      window.location.href = '/'; 
     }
+  } catch (err: any) {
+    toast.error(err.message || 'Login Gagal');
+  } finally {
     setLoading(false);
-  };
+  }
+};
 
   if (authLoading) {
      return <div className="flex items-center justify-center h-screen bg-balista-background">Memuat...</div>;

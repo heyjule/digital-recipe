@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabaseClient';
-import { generateRecipeSteps } from '../../services/geminiService';
+import { generateRecipeSteps } from '../../services/aiResepBaru';
 import type { Resep, Kategori, Bahan } from '../../types';
 import Layout from '../../components/Layout';
 import toast from 'react-hot-toast';
