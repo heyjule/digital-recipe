@@ -1,10 +1,21 @@
 import Groq from "groq-sdk";
 
-// Perbaikan pengambilan API Key agar lebih standar di Vite
-const apiKey = (import.meta as any).env.VITE_GROQ_API_KEY;
-const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true });
-
 export const generateRecipeDetails = async (resep: any) => {
+  // 1. Ambil API Key di DALAM fungsi agar tidak error saat inisialisasi awal
+  const apiKey = (import.meta as any).env.VITE_GROQ_API_KEY;
+
+  // 2. Validasi sederhana agar tidak crash jika .env belum terbaca
+  if (!apiKey) {
+    console.error("API Key Groq tidak ditemukan di .env");
+    return {
+      description: "Gagal memuat deskripsi AI.",
+      steps: ["Pastikan API Key sudah terpasang di Environment Variables."]
+    };
+  }
+
+  // 3. Buat instance Groq di sini
+  const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true });
+
   try {
     /** * PERBAIKAN REGEX: 
      * Menghapus karakter aneh dari Postgres dan mengganti pipa (|) 
@@ -39,11 +50,10 @@ export const generateRecipeDetails = async (resep: any) => {
     const chatCompletion = await groq.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
       model: "llama-3.3-70b-versatile",
-      temperature: 0.1, // Rendah agar konsisten
+      temperature: 0.1, 
       response_format: { type: "json_object" }
     });
 
-    // Parsing hasil dari AI
     const content = chatCompletion.choices[0]?.message?.content || "{}";
     return JSON.parse(content);
 
