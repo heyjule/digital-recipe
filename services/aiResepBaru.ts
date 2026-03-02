@@ -1,10 +1,11 @@
 import Groq from "groq-sdk";
 
-export const generateRecipeDetails = async (resep: any) => {
-  // 1. Ambil API Key di DALAM fungsi agar tidak error saat inisialisasi awal
+// PERBAIKAN: Menambahkan parameter kedua 'instruksiKhusus' dengan nilai default kosong
+export const generateRecipeDetails = async (resep: any, instruksiKhusus: string = "") => {
+  // 1. Ambil API Key di DALAM fungsi
   const apiKey = (import.meta as any).env.VITE_GROQ_API_KEY;
 
-  // 2. Validasi sederhana agar tidak crash jika .env belum terbaca
+  // 2. Validasi API Key
   if (!apiKey) {
     console.error("API Key Groq tidak ditemukan di .env");
     return {
@@ -13,37 +14,36 @@ export const generateRecipeDetails = async (resep: any) => {
     };
   }
 
-  // 3. Buat instance Groq di sini
+  // 3. Buat instance Groq
   const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true });
 
   try {
-    /** * PERBAIKAN REGEX: 
-     * Menghapus karakter aneh dari Postgres dan mengganti pipa (|) 
-     * menjadi spasi agar AI lebih mudah membaca takarannya.
-     */
+    // Membersihkan data bahan dan alat agar AI mudah membaca
     const bahan = String(resep.bahan || '')
       .replace(/[{}"]/g, '') 
-      .replace(/\|/g, ' '); // Nasi|150|gr menjadi Nasi 150 gr
+      .replace(/\|/g, ' ');
 
     const alat = String(resep.alat || '')
       .replace(/[{}"]/g, '')
       .replace(/[|;]/g, ', ');
 
+    // 4. MERAKIT PROMPT (Memasukkan instruksiKhusus ke dalam prompt utama)
     const prompt = `
       Buat SOP profesional Balista Sushi & Tea dalam format JSON untuk menu: "${resep.nama}".
       Bahan: ${bahan}. 
       Alat: ${alat}.
 
       INSTRUKSI WAJIB:
-      1. Pecah menjadi 7-10 langkah kerja detail, teknis, dan berurutan.
+      1. ${instruksiKhusus || "Pecah menjadi 8 langkah kerja detail, teknis, dan berurutan."}
       2. Gunakan pola: "Siapkan [bahan] menggunakan [alat]...".
-      3. Pastikan langkah menyebutkan takaran yang ada di daftar bahan (misal: 150 gr Nasi).
-      4. Kirim sebagai array langkah terpisah.
+      3. Pastikan langkah menyebutkan takaran yang ada di daftar bahan secara spesifik.
+      4. Langkah terakhir (ke-8) WAJIB diakhiri dengan kalimat: "Menu siap disajikan."
+      5. Kirim sebagai array langkah terpisah.
 
       FORMAT JSON WAJIB:
       {
         "description": "1 kalimat promosi singkat Balista.",
-        "steps": ["Langkah 1", "Langkah 2", "dst"]
+        "steps": ["Langkah 1", "Langkah 2", "Langkah 3", "Langkah 4", "Langkah 5", "Langkah 6", "Langkah 7", "Langkah 8"]
       }
     `;
 
@@ -55,7 +55,14 @@ export const generateRecipeDetails = async (resep: any) => {
     });
 
     const content = chatCompletion.choices[0]?.message?.content || "{}";
-    return JSON.parse(content);
+    const result = JSON.parse(content);
+
+    // Pastikan kita selalu mengembalikan maksimal 8 langkah saja
+    if (result.steps && result.steps.length > 8) {
+        result.steps = result.steps.slice(0, 8);
+    }
+
+    return result;
 
   } catch (error) {
     console.error("AI Error:", error);
