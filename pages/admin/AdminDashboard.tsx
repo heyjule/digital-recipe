@@ -148,6 +148,24 @@ const AdminDashboard = () => {
     fetchRecipes(); 
   };
 
+ useEffect(() => { 
+  const checkAccess = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const userEmail = user?.email?.toLowerCase() || "";
+    
+    // Jika bukan admin utama, tendang keluar ke halaman Crew
+    if (userEmail !== 'tasya.officebalista@gmail.com') {
+      toast.error("Akses Ditolak: Halaman khusus Admin Office");
+      window.location.href = '/'; 
+      return;
+    }
+    
+    fetchRecipes(); 
+  };
+
+  checkAccess();
+}, []);
+
   return (
     <Layout title="Admin Dashboard">
       <div className="p-8 text-left bg-[#fdf8f0] min-h-screen relative">
