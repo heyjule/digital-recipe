@@ -1,113 +1,85 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useEffect, useState } from 'react';
 import { supabase } from '../services/supabaseClient';
-import type { Session, User } from '@supabase/supabase-js';
-import type { Profile } from '../types';
 
-interface AuthContextType {
-  user: User | null;
-  session: Session | null;
-  profile: Profile | null;
-  loading: boolean;
-  signOut: () => Promise<void>;
-}
+export const AuthContext = createContext<any>(null);
 
-export const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-interface AuthProviderProps {
-  children: ReactNode;
-}
-
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  // --- FUNGSI BYPASS (JALUR KHUSUS) ---
-  // Kita tidak lagi meminta data ke database, tapi langsung buat data palsu
-  // supaya kamu BISA MASUK dulu.
-  const fetchProfile = async (userId: string) => {
-    console.log("[BYPASS] Mengaktifkan Jalur VIP Admin...");
-    
-    // Kembalikan data profil ADMIN secara paksa
-    return {
-      id: userId,
-      email: "urfahtasya@gmail.com", // Email kamu
-      role: 'admin',                 // JABATAN ADMIN
-      created_at: new Date().toISOString()
-    } as Profile;
-  };
-  // -------------------------------------
-
   useEffect(() => {
-    let mounted = true;
+    const initializeAuth = async () => {
+      setLoading(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session) {
+        setUser(session.user);
+        const userEmail = session.user.email?.toLowerCase() || "";
 
-    const initAuth = async () => {
-      try {
-        const { data: { session: currentSession }, error } = await supabase.auth.getSession();
-        
-        if (error) throw error;
-        
-        if (mounted) {
-            setSession(currentSession);
-            setUser(currentSession?.user ?? null);
+        // 1. Ambil data Profile dari Tabel
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
+        /**
+         * 2. LOGIKA KRUSIAL: FORCE ROLE BERDASARKAN EMAIL
+         * Jika email berawal 'balista', paksa role-nya jadi 'crew' 
+         * walau di database tertulis 'admin'.
+         */
+        let finalProfile = profileData;
+        if (userEmail.startsWith('balista')) {
+          finalProfile = { ...profileData, role: 'crew' };
+        } else if (userEmail === 'tasya.officebalista@gmail.com') {
+          finalProfile = { ...profileData, role: 'admin' };
         }
 
-        if (currentSession?.user && mounted) {
-          // Panggil fungsi Bypass di atas
-          const userProfile = await fetchProfile(currentSession.user.id);
-          if (mounted) setProfile(userProfile);
+        if (finalProfile) {
+          setProfile(finalProfile);
+          localStorage.setItem('userProfile', JSON.stringify(finalProfile));
         }
-      } catch (error) {
-        console.error('Gagal initAuth:', error);
-      } finally {
-        if (mounted) {
-            setLoading(false);
-        }
+      } else {
+        setUser(null);
+        setProfile(null);
+        localStorage.removeItem('userProfile');
       }
+      setLoading(false);
     };
 
-    initAuth();
+    initializeAuth();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        if (!mounted) return;
-
-        setSession(newSession);
-        setUser(newSession?.user ?? null);
-
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-            if (newSession?.user) {
-                const userProfile = await fetchProfile(newSession.user.id);
-                if (mounted) setProfile(userProfile);
-            }
-        } else if (event === 'SIGNED_OUT') {
-            setProfile(null);
-            setLoading(false);
-        }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        initializeAuth();
+      } else {
+        setUser(null);
+        setProfile(null);
+        localStorage.clear();
+        setLoading(false);
       }
-    );
+    });
 
-    return () => {
-      mounted = false;
-      authListener?.subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
   const signOut = async () => {
-    try {
-        await supabase.auth.signOut();
-        setSession(null);
-        setUser(null);
-        setProfile(null);
-        window.location.href = '/login'; 
-    } catch (e) {
-        console.error("Error sign out", e);
-        window.location.href = '/login';
-    }
+    await supabase.auth.signOut();
+    localStorage.clear();
+    setUser(null);
+    setProfile(null);
+    window.location.href = '/login';
   };
 
-  const value = { user, session, profile, loading, signOut };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, profile, loading, signOut }}>
+      {/* Jangan render children sebelum loading selesai untuk mencegah kedap-kedip */}
+      {!loading ? children : (
+        <div className="flex items-center justify-center h-screen bg-[#fdf8f0]">
+          <div className="w-10 h-10 border-4 border-[#d35400] border-t-transparent rounded-full animate-spin"></div>
+        </div>
+      )}
+    </AuthContext.Provider>
+  );
 };

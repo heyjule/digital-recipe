@@ -1,173 +1,227 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import toast from 'react-hot-toast';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import Layout from '../components/Layout';
-import { getGoogleDriveImageUrl } from '../utils/imageUtils';
-import { generateRecipeDetails } from '../services/geminiService';
-
-// Fungsi khusus untuk merapikan teks mentah "Bahan|Jumlah|Satuan"
-const parseData = (data: any) => {
-  if (!data || data === "NULL") return [];
-  if (Array.isArray(data)) return data;
-  if (typeof data === 'string') {
-    return data.split(';').map(item => {
-      const clean = item.trim();
-      if (clean.includes('|')) {
-        const parts = clean.split('|');
-        return { nama: parts[0], jumlah: parts[1] || '', satuan: parts[2] || '' };
-      }
-      return clean;
-    });
-  }
-  return [];
-};
+// @ts-ignore
+import { generateRecipeDetails } from '../services/aiResepBaru'; 
+import toast from 'react-hot-toast';
 
 const RecipeDetail = () => {
-  const { id } = useParams<{ id: string }>();
-  const [recipe, setRecipe] = useState<any>(null);
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [resep, setResep] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isAiLoading, setIsAiLoading] = useState(false);
 
   useEffect(() => {
-    const fetchRecipe = async () => {
+    const fetchDetail = async () => {
       if (!id) return;
+      setLoading(true);
       try {
-        const { data, error } = await supabase.from('resep').select(`*, kategori(nama)`).eq('id', id).single();
+        const { data, error } = await supabase
+          .from('resep')
+          .select('*')
+          .eq('id', id)
+          .single();
         if (error) throw error;
-        setRecipe(data);
+        setResep(data);
       } catch (err) {
-        console.error("Gagal mengambil data:", err);
+        toast.error("Menu tidak ditemukan");
+        navigate('/');
       } finally {
         setLoading(false);
       }
     };
-    fetchRecipe();
-  }, [id]);
+    fetchDetail();
+  }, [id, navigate]);
 
-  const handleAIUpdate = async () => {
-    if (!recipe || !id) return;
-    setIsProcessing(true);
-    const toastId = toast.loading("Chef AI sedang menyusun detail resep...");
+  /**
+   * FIX LOGIKA FOTO: Disamakan persis dengan Home.tsx
+   * Menggunakan format googleusercontent untuk render yang lebih stabil
+   */
+  const getImageUrl = (url: string) => {
+    // Gunakan Unsplash sebagai fallback yang lebih stabil daripada via.placeholder
+    const fallbackImage = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=1000';
     
+    if (!url || url === 'NULL' || url.trim() === "") {
+      return fallbackImage;
+    }
+
+    const driveIdMatch = url.match(/(?:\/d\/|id=)([\w-]+)/);
+    if (driveIdMatch && (url.includes('drive.google.com') || url.includes('docs.google.com'))) {
+      const driveId = driveIdMatch[1];
+      // FIX TYPO: Menggunakan template literal yang benar agar driveId terbaca
+      return `https://lh3.googleusercontent.com/u/0/d/${driveId}`;
+    }
+    return url;
+  };
+
+  const handleDetailkanAI = async () => {
+    if (!resep) return;
+    setIsAiLoading(true);
+    const tid = toast.loading("AI sedang menyusun SOP...");
     try {
-      const aiResult = await generateRecipeDetails({ 
-        namaMenu: recipe.nama, 
-        bahan: recipe.bahan, 
-        alat: recipe.alat,
-        deskripsi: recipe.deskripsi 
-      });
+      const res = await generateRecipeDetails(resep);
+      if (res && res.steps) {
+        const cleanSteps = res.steps.slice(0, 6).map((s: string) => s.replace(/"/g, "'").trim());
+        const postgresArray = `{"${cleanSteps.join('","')}"}`;
+        
+        const { error } = await supabase
+          .from('resep')
+          .update({ deskripsi: res.description, langkah: postgresArray })
+          .eq('id', resep.id);
 
-      if (!aiResult) throw new Error("AI tidak memberikan respon");
-
-      // Update database dengan hasil dari AI
-      const { error } = await supabase.from('resep').update({ 
-        langkah: aiResult.steps, 
-        deskripsi: aiResult.description,
-        bahan: aiResult.bahan || recipe.bahan,
-        alat: aiResult.alat || recipe.alat
-      }).eq('id', id);
-
-      if (error) throw error;
-      
-      setRecipe((prev: any) => ({ ...prev, ...aiResult, langkah: aiResult.steps, deskripsi: aiResult.description }));
-      toast.success("Resep berhasil diperbarui oleh AI!", { id: toastId });
-    } catch (e) {
-      toast.error("Gagal memproses AI. Cek koneksi/API Key.", { id: toastId });
-    } finally {
-      setIsProcessing(false);
+        if (!error) {
+          const { data } = await supabase.from('resep').select('*').eq('id', resep.id).single();
+          setResep(data);
+          toast.success("SOP AI Berhasil Diperbarui!", { id: tid });
+        }
+      }
+    } catch (e) { 
+      toast.error("Gagal sinkronisasi AI", { id: tid }); 
+    } finally { 
+      setIsAiLoading(false); 
     }
   };
 
-  if (loading) return <Layout title="Loading..."><div className="p-20 text-center animate-pulse text-xl">Menyiapkan resep...</div></Layout>;
-  if (!recipe) return <Layout title="Error"><div className="p-20 text-center">Menu tidak ditemukan.</div></Layout>;
+  /**
+   * PARSE BAHAN: Nama di Kiri, Takaran di Kanan
+   */
+  const parseBahanBersih = (val: any) => {
+    if (!val) return [];
+    let str = String(val).replace(/[\[\]{}"]/g, '');
+    const items = str.split(/[;\n]/).map(i => i.trim()).filter(i => i !== "");
+    
+    return items.map(item => {
+      if (item.includes('|')) {
+        const parts = item.split('|').map(p => p.trim());
+        const takaran = parts.slice(1).join(' ').replace(/nama:|jumlah:|satuan:|:/gi, '').trim();
+        return { 
+          nama: parts[0].replace(/nama:|jumlah:|satuan:|:/gi, '').trim(), 
+          takaran: takaran 
+        };
+      }
+      
+      const match = item.match(/(\d+.*)/); 
+      if (match && match.index !== undefined) {
+        const namaBahan = item.substring(0, match.index).trim();
+        const takaranLengkap = match[0].trim(); 
+        return { 
+          nama: namaBahan.replace(/nama:|jumlah:|satuan:|:/gi, '').trim(), 
+          takaran: takaranLengkap 
+        };
+      }
+
+      return { 
+        nama: item.replace(/nama:|jumlah:|satuan:|:/gi, '').trim(), 
+        takaran: "" 
+      };
+    });
+  };
+
+  const parseLangkahRapi = (val: any) => {
+    if (!val) return [];
+    let cleanStr = String(val).replace(/[{}'\[\]"]/g, '');
+    const steps = cleanStr.split(',').map(s => s.trim()).filter(s => s.length > 5);
+    return steps.slice(0, 6);
+  };
+
+  if (loading) return <div className="h-screen bg-[#fdf8f0] flex items-center justify-center font-black text-orange-600 animate-pulse uppercase text-xl italic text-left">Memuat SOP Balista...</div>;
+  if (!resep) return null;
 
   return (
-    <Layout title={recipe.nama}>
-      <div className="max-w-5xl mx-auto bg-white rounded-[3rem] shadow-2xl overflow-hidden mb-12 mt-6 border border-gray-100">
-        {/* BAGIAN GAMBAR */}
-        <div className="h-[450px] relative bg-gray-100">
-          <img 
-            src={getGoogleDriveImageUrl(recipe.foto_url)} 
-            className="w-full h-full object-cover" 
-            alt={recipe.nama} 
-            onError={(e) => { e.currentTarget.src = "https://placehold.co/1200x600?text=Foto+Menu+Belista" }}
-          />
-          <Link to="/" className="absolute top-8 left-8 bg-white/90 backdrop-blur px-6 py-3 rounded-2xl font-bold shadow-xl hover:bg-white transition-all">
-            ← Kembali ke Galeri
-          </Link>
+    <div className="min-h-screen bg-[#f3e5c9] pb-24 font-sans text-left">
+      <nav className="bg-white/80 backdrop-blur-md px-10 py-4 flex justify-between items-center sticky top-0 z-50 shadow-sm">
+        <span className="font-black text-gray-800 tracking-tighter uppercase text-lg italic cursor-pointer" onClick={() => navigate('/')}>Balista Sushi & Tea</span>
+        <div className="flex items-center gap-6">
+          <Link to="/" className="text-[12px] font-bold text-gray-600 hover:text-orange-500">Galeri Resep</Link>
+          <Link to="/admin" className="text-[12px] font-bold text-gray-600 hover:text-orange-500">Dashboard</Link>
         </div>
+      </nav>
 
-        <div className="p-12">
-          {/* HEADER & TOMBOL AI */}
-          <div className="flex justify-between items-start mb-12 border-b border-gray-100 pb-10">
-            <div className="flex-1">
-              <h1 className="text-5xl font-black text-gray-800 mb-4 tracking-tight">{recipe.nama}</h1>
-              <p className="text-2xl italic text-gray-400 font-medium">"{recipe.deskripsi || 'Resep spesial racikan Balista Sushi & Tea.'}"</p>
+      <div className="max-w-4xl mx-auto py-10 px-4">
+        <div className="bg-white rounded-[45px] shadow-xl overflow-hidden border border-gray-100">
+          
+          {/* FOTO MENU: SINKRON DENGAN GALERI */}
+          <div className="relative h-[450px] m-4 rounded-[35px] overflow-hidden bg-gray-100 shadow-inner">
+            <img 
+              src={getImageUrl(resep.foto_url || resep.foto)} 
+              alt={resep.nama} 
+              className="w-full h-full object-cover transition-transform duration-500 hover:scale-105"
+              onError={(e) => {
+                // Mencegah loop error jika link utama mati
+                const target = e.target as HTMLImageElement;
+                if (target.src !== 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=1000') {
+                  target.src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=1000';
+                }
+              }}
+            />
+            <button onClick={() => navigate('/')} className="absolute top-6 left-6 bg-white/90 px-5 py-2 rounded-xl text-[11px] font-black shadow-md uppercase">← Kembali</button>
+          </div>
+
+          <div className="px-12 py-8 flex flex-col md:flex-row justify-between items-start gap-6">
+            <div className="w-full text-left">
+              <h1 className="text-5xl font-black text-gray-900 tracking-tighter mb-4 italic uppercase">{resep.nama}</h1>
+              {resep.potongan && (
+                <div className="mb-4">
+                  <span className="bg-orange-100 text-[#d35400] px-5 py-2 rounded-full font-black text-[11px] uppercase tracking-widest italic">
+                    🍱 Porsi: {resep.potongan}
+                  </span>
+                </div>
+              )}
+              <div className="bg-orange-50 border-l-4 border-orange-500 p-5 rounded-r-3xl">
+                <p className="text-orange-900 italic text-sm font-bold leading-relaxed">"{resep.deskripsi || 'SOP Standar Menu Balista Sushi & Tea.'}"</p>
+              </div>
             </div>
-            <button 
-              onClick={handleAIUpdate} 
-              disabled={isProcessing}
-              className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-10 py-5 rounded-[2rem] font-bold shadow-2xl hover:scale-105 active:scale-95 transition-all disabled:opacity-50 flex items-center gap-3"
-            >
-              {isProcessing ? "⏳ Memproses..." : "✨ Detailkan AI"}
+            <button onClick={handleDetailkanAI} disabled={isAiLoading} className="bg-[#6347f9] text-white px-8 py-4 rounded-full font-black text-[12px] uppercase shadow-lg hover:bg-indigo-700 transition-all shrink-0">
+              {isAiLoading ? '⏳ PROSES...' : '✨ Detailkan AI'}
             </button>
           </div>
 
-          {/* GRID BAHAN & ALAT */}
-          <div className="grid md:grid-cols-2 gap-10 mb-16">
-            <div className="bg-orange-50/50 p-10 rounded-[2.5rem] border border-orange-100">
-              <h3 className="text-2xl font-black text-orange-800 mb-8 flex items-center gap-3">🥬 Bahan-Bahan</h3>
-              <div className="space-y-4">
-                {parseData(recipe.bahan).map((b: any, i: number) => (
-                  <div key={i} className="flex justify-between items-center border-b border-orange-200/50 pb-3">
-                    <span className="text-lg font-bold text-gray-700">{typeof b === 'object' ? b.nama : b}</span>
-                    <span className="text-orange-600 font-black px-4 py-1 bg-white rounded-full shadow-sm text-sm">
-                      {typeof b === 'object' ? `${b.jumlah} ${b.satuan}` : ''}
-                    </span>
+          <div className="px-12 grid grid-cols-1 md:grid-cols-2 gap-8 my-10">
+            <div className="bg-white border border-orange-100 rounded-[35px] p-10 shadow-sm text-left">
+              <h3 className="text-[#d35400] font-black uppercase text-[13px] mb-8 italic tracking-widest">🥗 Bahan-Bahan</h3>
+              <div className="space-y-5">
+                {parseBahanBersih(resep.bahan).map((item, i) => (
+                  <div key={i} className="flex justify-between items-center border-b border-orange-50 pb-4">
+                    <span className="text-[15px] font-bold text-gray-700 capitalize">{item.nama}</span>
+                    <span className="text-[13px] font-black text-[#d35400] uppercase text-right">{item.takaran}</span>
                   </div>
                 ))}
               </div>
             </div>
-            
-            <div className="bg-blue-50/50 p-10 rounded-[2.5rem] border border-blue-100">
-              <h3 className="text-2xl font-black text-blue-800 mb-8 flex items-center gap-3">🔪 Alat Masak</h3>
-              <div className="flex flex-wrap gap-4">
-                {parseData(recipe.alat).map((a: any, i: number) => (
-                  <span key={i} className="bg-white px-6 py-3 rounded-2xl border border-blue-200 text-gray-700 font-bold shadow-sm">
-                    {typeof a === 'object' ? a.nama : a}
+
+            <div className="bg-white border border-blue-100 rounded-[35px] p-10 text-center shadow-sm">
+              <h3 className="text-[#004bb3] font-black uppercase text-[13px] mb-8 italic tracking-widest flex justify-center items-center gap-2 text-center">⚒️ Alat Masak</h3>
+              <div className="flex flex-wrap gap-4 justify-center">
+                {String(resep.alat || '').replace(/[\[\]{}"]/g, '').split(/[;,|]/).map((a, i) => (
+                  <span key={i} className="bg-white border border-blue-200 px-6 py-3 rounded-2xl text-[11px] font-black text-blue-600 uppercase shadow-sm">
+                    {a.trim()}
                   </span>
                 ))}
               </div>
             </div>
           </div>
 
-          {/* LANGKAH MEMASAK */}
-          <div className="bg-gray-50/50 p-10 rounded-[3rem] border border-gray-100">
-            <h3 className="text-3xl font-black text-gray-800 mb-10">Metode Pembuatan:</h3>
-            {Array.isArray(recipe.langkah) && recipe.langkah.length > 0 ? (
-              <div className="space-y-8">
-                {recipe.langkah.map((step: string, idx: number) => (
-                  <div key={idx} className="flex gap-8 group">
-                    <div className="flex-shrink-0 w-14 h-14 bg-white border-2 border-indigo-600 text-indigo-600 rounded-2xl flex items-center justify-center font-black text-2xl shadow-lg group-hover:bg-indigo-600 group-hover:text-white transition-all">
-                      {idx + 1}
+          <div className="px-12 pb-24 text-left">
+            <div className="bg-[#fcfcfe] rounded-[45px] p-12 border border-gray-100 shadow-inner text-left">
+              <h3 className="text-2xl font-black text-gray-800 mb-10 uppercase tracking-tighter italic text-left">Metode Pembuatan:</h3>
+              <div className="space-y-8 text-left">
+                {parseLangkahRapi(resep.langkah).map((step, i) => (
+                  <div key={i} className="flex gap-8 items-start group text-left">
+                    <div className="w-10 h-10 rounded-xl border-2 border-indigo-500 text-indigo-600 flex items-center justify-center font-black shrink-0 shadow-sm group-hover:bg-indigo-500 group-hover:text-white transition-all">
+                      {i + 1}
                     </div>
-                    <div className="pt-2">
-                      <p className="text-xl text-gray-700 leading-relaxed font-medium">{step}</p>
+                    <div className="pt-2 text-left">
+                      <p className="font-bold text-gray-700 leading-relaxed text-[16px] text-left">{step}</p>
                     </div>
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="text-center py-20 bg-white rounded-[2rem] border-4 border-dashed border-gray-100">
-                <p className="text-gray-400 text-xl font-bold italic mb-4">Instruksi memasak belum tersedia.</p>
-                <p className="text-gray-400">Klik tombol di atas untuk menyusun resep otomatis dengan AI.</p>
-              </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
-    </Layout>
+    </div>
   );
 };
 

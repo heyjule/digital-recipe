@@ -1,147 +1,148 @@
-// 🟢 FILE: src/pages/Home.tsx
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-
-// Import services dan utils
-import { supabase } from '../services/supabaseClient'; 
+import { supabase } from '../services/supabaseClient';
 import Layout from '../components/Layout';
-import { getGoogleDriveImageUrl } from '../utils/imageUtils';
 
 const Home = () => {
   const [recipes, setRecipes] = useState<any[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("Semua");
+  const [filter, setFilter] = useState('Semua');
 
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const { data: dataResep } = await supabase
-          .from('resep')
-          .select(`*, kategori(nama)`)
-          .order('created_at', { ascending: false });
-          
-        const { data: dataKategori } = await supabase
-          .from('kategori')
-          .select('*')
-          .order('nama', { ascending: true });
-          
-        setRecipes(dataResep || []);
-        setCategories(dataKategori || []);
-      } catch (error) {
-        console.error("Gagal mengambil data:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
+    fetchRecipes();
   }, []);
 
-  const filteredRecipes = recipes.filter((recipe) => {
-    const matchSearch = recipe.nama.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchCategory = selectedCategory === "Semua" || recipe.kategori?.nama === selectedCategory;
-    return matchSearch && matchCategory;
-  });
+  const fetchRecipes = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('resep')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      setRecipes(data || []);
+    } catch (err) {
+      console.error("Gagal memuat resep:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  if (loading) return (
-    <Layout title="Loading...">
-      <div className="text-center p-20 font-bold text-gray-500 animate-pulse">
-        Memuat Menu Balista...
-      </div>
-    </Layout>
-  );
+  /**
+   * KONVERSI LINK GOOGLE DRIVE KE DIRECT LINK
+   * Agar tag <img> bisa menampilkan foto dari link yang ada di Supabase
+   */
+  const getImageUrl = (url: string) => {
+    if (!url || url === 'NULL' || url.trim() === "") return "";
+
+    const cleanUrl = url.trim();
+    const driveIdMatch = cleanUrl.match(/(?:\/d\/|id=)([\w-]+)/);
+    
+    if (driveIdMatch && (cleanUrl.includes('drive.google.com') || cleanUrl.includes('docs.google.com'))) {
+      const driveId = driveIdMatch[1];
+      // Format Direct Link Google User Content
+      return `https://lh3.googleusercontent.com/u/0/d/${driveId}`;
+    }
+    return cleanUrl;
+  };
+
+  const categories = ['Semua', 'Mentai Rice', 'Minuman', 'Ramen', 'Sushi Reguler', 'Takoyaki & Okonomiyaki'];
+
+  /**
+   * FILTER DATA:
+   * 1. Saring berdasarkan kategori.
+   * 2. Saring hanya menu yang memiliki foto (Mengecualikan data NULL di Supabase)
+   */
+  const filteredRecipes = recipes
+    .filter(r => {
+      if (filter === 'Semua') return true;
+      return (r.kategori || '').toLowerCase().trim() === filter.toLowerCase().trim();
+    })
+    .filter(r => {
+      // Hanya tampilkan jika foto_url ada isinya dan bukan 'NULL'
+      return r.foto_url && r.foto_url !== 'NULL' && r.foto_url.trim() !== "";
+    });
 
   return (
-    <Layout title="Galeri Resep">
-      <div className="text-center mb-8 pt-6">
-        <h1 className="text-4xl font-bold text-gray-800 mb-2">Mau Masak Apa Hari Ini? 🍣</h1>
-        <p className="text-gray-600">Temukan inspirasi menu terbaik dari Balista Sushi & Tea</p>
-      </div>
-
-      {/* Filter & Search */}
-      <div className="max-w-4xl mx-auto mb-10 px-4">
-        <div className="relative mb-6">
-          <input 
-            type="text" 
-            placeholder="Cari menu favoritmu..." 
-            value={searchQuery} 
-            onChange={(e) => setSearchQuery(e.target.value)} 
-            className="w-full px-5 py-3 rounded-full border border-gray-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 pl-12 transition-all" 
-          />
-          <span className="absolute left-4 top-3.5 text-gray-400 text-lg">🔍</span>
-        </div>
-        <div className="flex flex-wrap justify-center gap-2">
-          <button 
-            onClick={() => setSelectedCategory("Semua")} 
-            className={`px-5 py-2 rounded-full text-sm font-bold transition-all shadow-sm ${selectedCategory === "Semua" ? "bg-green-600 text-white" : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"}`}
-          >
-            Semua
-          </button>
+    <Layout title="Galeri Resep Balista">
+      <div className="pb-24 text-left font-sans">
+        
+        {/* Navigasi Filter Kategori */}
+        <div className="flex flex-wrap gap-3 mb-12">
           {categories.map((cat) => (
-            <button 
-              key={cat.id} 
-              onClick={() => setSelectedCategory(cat.nama)} 
-              className={`px-5 py-2 rounded-full text-sm font-bold transition-all shadow-sm ${selectedCategory === cat.nama ? "bg-green-600 text-white" : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"}`}
+            <button
+              key={cat}
+              onClick={() => setFilter(cat)}
+              className={`px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all duration-300 ${
+                filter === cat 
+                ? 'bg-[#d35400] text-white shadow-lg' 
+                : 'bg-white text-gray-400 border border-gray-100 hover:bg-gray-50'
+              }`}
             >
-              {cat.nama}
+              {cat}
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Grid Menu */}
-      {filteredRecipes.length === 0 ? (
-        <div className="text-center py-20 bg-gray-50 border-2 border-dashed border-gray-200 rounded-3xl mx-4">
-          <p className="text-gray-400 font-medium text-lg">Menu tidak ditemukan dalam kategori ini.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-8 pb-12 px-4">
-          {filteredRecipes.map((r) => (
-            <Link to={`/resep/${r.id}`} key={r.id} className="group block h-full">
-              <div className="bg-white rounded-[2rem] shadow-sm hover:shadow-2xl transition-all duration-500 hover:-translate-y-2 h-full border border-gray-100 flex flex-col overflow-hidden">
-                
-                {/* Image Section */}
-                <div className="h-56 overflow-hidden bg-gray-100 relative">
-                  
-                  {/* 👇 BAGIAN IMG YANG SUDAH DIPERBAIKI & DIBERSIHKAN 👇 */}
-                  <img 
-                    src={getGoogleDriveImageUrl(r.foto_url)} 
-                    alt={r.nama} 
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      e.currentTarget.src = "https://placehold.co/600x400?text=Cek+Akses+Drive";
-                    }}
-                  />
-
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                  <span className="absolute top-4 right-4 bg-balista-secondary/90 backdrop-blur-sm text-white text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest shadow-lg">
-                    {r.kategori?.nama || 'UMUM'}
-                  </span>
-                </div>
-
-                {/* Content Section */}
-                <div className="p-6 flex-grow flex flex-col">
-                  <h3 className="text-xl font-black text-gray-800 line-clamp-1 group-hover:text-green-600 transition-colors">
-                    {r.nama}
-                  </h3>
-                  <p className="text-sm text-gray-500 line-clamp-2 mt-2 mb-6 flex-grow italic leading-relaxed">
-                    {r.deskripsi || "Ketuk untuk melihat detail bahan dan cara pembuatan..."}
-                  </p>
-                  <div className="pt-4 border-t border-gray-100 flex justify-between items-center text-sm font-bold">
-                    <span className="text-gray-300">Resep Balista</span>
-                    <span className="text-green-600 flex items-center gap-1 group-hover:gap-2 transition-all">
-                      Buka Resep <span className="text-lg">→</span>
-                    </span>
+        {/* Grid Menampilkan Menu */}
+        {loading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10">
+            {[1, 2, 3, 4].map(n => (
+              <div key={n} className="h-[400px] bg-white rounded-[45px] animate-pulse border border-gray-100 shadow-sm"></div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10">
+            {filteredRecipes.length > 0 ? (
+              filteredRecipes.map((resep) => (
+                <Link 
+                  to={`/resep/${resep.id}`} 
+                  key={resep.id}
+                  className="group bg-white rounded-[45px] overflow-hidden shadow-sm hover:shadow-2xl hover:-translate-y-3 transition-all duration-500 border border-gray-50 flex flex-col h-full"
+                >
+                  <div className="relative h-[240px] overflow-hidden m-4 rounded-[35px] bg-gray-50 shadow-inner">
+                    <img 
+                      // Memanggil fungsi konversi dengan parameter dari kolom foto_url Supabase
+                      src={getImageUrl(resep.foto_url)} 
+                      alt={resep.nama}
+                      className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute top-4 right-4">
+                      <span className="bg-[#d35400] text-white text-[9px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-lg italic">
+                        {resep.kategori || 'MENU'}
+                      </span>
+                    </div>
                   </div>
-                </div>
+
+                  <div className="p-8 pt-2 flex-grow flex flex-col">
+                    <h3 className="text-2xl font-black text-gray-800 uppercase tracking-tighter mb-3 leading-tight group-hover:text-[#d35400] italic">
+                      {resep.nama}
+                    </h3>
+                    <p className="text-gray-400 text-[12px] font-bold leading-relaxed italic mb-8 line-clamp-2">
+                      {resep.deskripsi || 'SOP Menu Balista Sushi & Tea.'}
+                    </p>
+                    
+                    <div className="flex items-center justify-between mt-auto pt-6 border-t border-gray-50">
+                      <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest italic">Resep Balista</span>
+                      <div className="flex items-center gap-2 text-green-600 font-black text-[10px] uppercase tracking-tighter transition-all group-hover:gap-3">
+                        Buka Resep →
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              ))
+            ) : (
+              <div className="col-span-full py-24 text-center bg-white/50 rounded-[50px] border-2 border-dashed border-gray-200">
+                <p className="text-gray-400 font-black uppercase tracking-[0.2em] mb-4 italic">
+                  Belum ada menu dengan foto untuk kategori ini
+                </p>
               </div>
-            </Link>
-          ))}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </div>
     </Layout>
   );
 };

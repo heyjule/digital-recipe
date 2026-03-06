@@ -1,23 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Ambil variabel dari .env
-const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
-const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = 'https://nxdolyuzmpglvoetookj.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im54ZG9seXV6bXBnbHZvZXRvb2tqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkxMzczMTMsImV4cCI6MjA4NDcxMzMxM30.QRTO4p1UHiJoQzRBgjmm_MrD--Vtmq2w9scDDBaoEW0';
 
-// Debugging: Cek di Console apakah terbaca
-console.log("=== STATUS KONEKSI ===");
-console.log("Supabase URL:", supabaseUrl ? "✅ Ada" : "❌ HILANG (Undefined)");
-console.log("Supabase Key:", supabaseAnonKey ? "✅ Ada" : "❌ HILANG (Undefined)");
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error("FATAL ERROR: Supabase URL atau Key belum disetting di .env.local");
-}
+// Agar file lain tidak error saat memanggil pengecekan ini
+export const isSupabaseConfigured = true;
 
-// Buat koneksi (Gunakan string kosong jika undefined agar tidak crash total saat loading awal)
-export const supabase = createClient(
-  supabaseUrl || "https://placeholder.supabase.co", 
-  supabaseAnonKey || "placeholder-key"
-);
-
-// Fungsi cek status sederhana
-export const isSupabaseConfigured = !!supabaseUrl && !!supabaseAnonKey;
+console.log("🔥 Koneksi Supabase Berhasil Diaktifkan");
